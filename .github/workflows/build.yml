@@ -1,4 +1,4 @@
-name: Build Custom Linux OS (Ultra-Light Windows Style v2)
+name: Build Custom Linux OS (Ultra-Light Windows Style v3)
 on:
   workflow_dispatch:
 
@@ -20,7 +20,6 @@ jobs:
         run: |
           mkdir -p build-dir
           cd build-dir
-          # Linux特有の黒い起動画面を隠すために「quiet splash」を追加
           sudo lb config \
             --distribution bookworm \
             --architecture amd64 \
@@ -29,7 +28,7 @@ jobs:
             --security false
 
           # ---------------------------------------------------------
-          # 1. パッケージリスト（ストア機能と見た目の改善を追加）
+          # 1. パッケージリスト（GSmartControlを追加）
           # ---------------------------------------------------------
           sudo mkdir -p config/package-lists
           echo "linux-image-amd64 live-boot live-config systemd-sysv task-lxqt-desktop firefox-esr mousepad network-manager isolinux grub-pc-bin grub-efi-amd64-bin \
@@ -37,10 +36,10 @@ jobs:
           ufw apparmor apparmor-profiles picom \
           cpu-x hardinfo glmark2 mangohud sysbench zenity \
           gnome-software gnome-software-plugin-flatpak flatpak \
-          plymouth plymouth-themes papirus-icon-theme" | sudo tee config/package-lists/my-apps.list.chroot > /dev/null
+          plymouth plymouth-themes papirus-icon-theme gsmartcontrol" | sudo tee config/package-lists/my-apps.list.chroot > /dev/null
 
           # ---------------------------------------------------------
-          # 2. アプリストア（Flathub）の初期設定フック
+          # 2. アプリストア（Flathub）の初期設定
           # ---------------------------------------------------------
           sudo mkdir -p config/hooks/normal
           cat << 'EOF' | sudo tee config/hooks/normal/01-setup-flathub.hook.chroot > /dev/null
@@ -61,15 +60,15 @@ jobs:
           Name=Picom VSync" | sudo tee config/includes.chroot/etc/skel/.config/autostart/picom.desktop > /dev/null
 
           # ---------------------------------------------------------
-          # 4. 自作アプリ：CPU & GPUベンチマークの実装
+          # 4. デスクトップアイコン＆自作ベンチマークの実装
           # ---------------------------------------------------------
           sudo mkdir -p config/includes.chroot/usr/local/bin
           sudo mkdir -p config/includes.chroot/etc/skel/Desktop
 
-          # CPUベンチマークスクリプト
+          # 自作CPUベンチマーク
           cat << 'EOF' | sudo tee config/includes.chroot/usr/local/bin/my-bench.sh > /dev/null
           #!/bin/bash
-          zenity --question --title="CPUベンチマーク" --text="今からCPUの性能測定を開始します！\n\nPCが全力で計算を行うため、ファンが少し回ります。\n「はい」を押してスタートしてください。" || exit
+          zenity --question --title="CPUベンチマーク" --text="今からCPUの性能測定を開始します！\n\n「はい」を押してスタートしてください。" || exit
           sysbench cpu --cpu-max-prime=15000 --threads=$(nproc) run | tee /tmp/bench.log | zenity --progress --title="測定中..." --text="CPUを100%使って計算しています...\n少しお待ちください。" --pulsate --auto-close --no-cancel
           SCORE=$(grep "events per second:" /tmp/bench.log | awk '{print $4}')
           FINAL_SCORE=$(printf "%.0f" $SCORE)
@@ -77,17 +76,19 @@ jobs:
           EOF
           sudo chmod +x config/includes.chroot/usr/local/bin/my-bench.sh
 
-          # GPUベンチマークスクリプト（新規追加）
+          # 自作GPUベンチマーク
           cat << 'EOF' | sudo tee config/includes.chroot/usr/local/bin/my-gpu-bench.sh > /dev/null
           #!/bin/bash
-          zenity --question --title="GPU（グラボ）ベンチマーク" --text="今から3Dグラフィックの描画テストを開始します！\n\n画面に3Dの馬が現れ、カクつきなどを測定します。\nテストが終わるまでウィンドウを閉じないでください。\n\n「はい」を押してスタートします。" || exit
+          zenity --question --title="GPU（グラボ）ベンチマーク" --text="今から3Dグラフィックの描画テストを開始します！\n\nテストが終わるまでウィンドウを閉じないでください。\n\n「はい」を押してスタートします。" || exit
           glmark2 > /tmp/gpu_bench.log
           GPU_SCORE=$(grep "glmark2 Score" /tmp/gpu_bench.log | awk '{print $NF}')
           zenity --info --title="測定完了！" --text="🎮 あなたのGPUスコア: 【 $GPU_SCORE 】\n\n(解説)\n・ゲームや動画再生の滑らかさを示す数値です。\n・数値が高いほど3D性能が優秀です！"
           EOF
           sudo chmod +x config/includes.chroot/usr/local/bin/my-gpu-bench.sh
 
-          # デスクトップショートカット作成
+          # --- デスクトップのショートカット作成 ---
+          
+          # 1. CPUベンチマーク
           cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/CPU-Bench.desktop > /dev/null
           [Desktop Entry]
           Version=1.0
@@ -98,6 +99,7 @@ jobs:
           EOF
           sudo chmod +x config/includes.chroot/etc/skel/Desktop/CPU-Bench.desktop
 
+          # 2. GPUベンチマーク
           cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/GPU-Bench.desktop > /dev/null
           [Desktop Entry]
           Version=1.0
@@ -108,6 +110,28 @@ jobs:
           EOF
           sudo chmod +x config/includes.chroot/etc/skel/Desktop/GPU-Bench.desktop
 
+          # 3. CPU-X (CPU-Z風)
+          cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/CPU-X.desktop > /dev/null
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=システム情報 (CPU-Z風)
+          Exec=cpu-x
+          Icon=cpu-x
+          EOF
+          sudo chmod +x config/includes.chroot/etc/skel/Desktop/CPU-X.desktop
+
+          # 4. GSmartControl (CrystalDiskInfo風)
+          cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/DiskInfo.desktop > /dev/null
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=ディスク健康診断 (DiskInfo)
+          Exec=gsmartcontrol
+          Icon=gsmartcontrol
+          EOF
+          sudo chmod +x config/includes.chroot/etc/skel/Desktop/DiskInfo.desktop
+
       - name: Build ISO
         run: |
           cd build-dir
@@ -116,5 +140,5 @@ jobs:
       - name: Upload ISO to GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: My-UltraLight-WinStyle-v2
+          name: My-UltraLight-WinStyle-v3
           path: build-dir/*.iso
