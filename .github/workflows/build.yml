@@ -1,0 +1,93 @@
+name: Build Custom Linux OS (Ultra-Light Windows Style)
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debootstrap debian-archive-keyring wget
+          wget http://ftp.debian.org/debian/pool/main/l/live-build/live-build_20230502_all.deb
+          sudo apt-get install -y ./live-build_20230502_all.deb
+
+      - name: Setup live-build configuration
+        run: |
+          mkdir -p build-dir
+          cd build-dir
+          sudo lb config \
+            --distribution bookworm \
+            --architecture amd64 \
+            --archive-areas "main contrib non-free-firmware" \
+            --bootappend-live "boot=live components locales=ja_JP.UTF-8 keyboard-layouts=jp" \
+            --security false
+
+          # ---------------------------------------------------------
+          # 1. パッケージリスト（★ここをLXQtに変更しました★）
+          # ---------------------------------------------------------
+          sudo mkdir -p config/package-lists
+          echo "linux-image-amd64 live-boot live-config systemd-sysv task-lxqt-desktop firefox-esr mousepad network-manager isolinux grub-pc-bin grub-efi-amd64-bin \
+          fonts-noto-cjk fcitx5 fcitx5-mozc fcitx5-config-qt \
+          ufw apparmor apparmor-profiles picom \
+          cpu-x hardinfo glmark2 mangohud sysbench zenity" | sudo tee config/package-lists/my-apps.list.chroot > /dev/null
+
+          # ---------------------------------------------------------
+          # 2. 垂直同期（ティアリング防止）の自動起動設定
+          # ---------------------------------------------------------
+          sudo mkdir -p config/includes.chroot/etc/skel/.config/autostart
+          echo "[Desktop Entry]
+          Type=Application
+          Exec=picom --vsync
+          Hidden=false
+          NoDisplay=false
+          Name=Picom VSync" | sudo tee config/includes.chroot/etc/skel/.config/autostart/picom.desktop > /dev/null
+
+          # ---------------------------------------------------------
+          # 3. 自作アプリ：オリジナル・ベンチマークの実装
+          # ---------------------------------------------------------
+          sudo mkdir -p config/includes.chroot/usr/local/bin
+          sudo mkdir -p config/includes.chroot/etc/skel/Desktop
+
+          cat << 'EOF' | sudo tee config/includes.chroot/usr/local/bin/my-bench.sh > /dev/null
+          #!/bin/bash
+          zenity --question --title="オリジナルCPUベンチマーク" --text="今からCPUの性能測定（シネベンチ風テスト）を開始します！\n\nPCが全力で計算を行うため、ファンが少し回ります。\n「はい」を押してスタートしてください。" || exit
+          
+          sysbench cpu --cpu-max-prime=15000 --threads=$(nproc) run | tee /tmp/bench.log | zenity --progress --title="測定中..." --text="CPUを100%使って計算しています...\n少しお待ちください。" --pulsate --auto-close --no-cancel
+          
+          SCORE=$(grep "events per second:" /tmp/bench.log | awk '{print $4}')
+          FINAL_SCORE=$(printf "%.0f" $SCORE)
+          
+          zenity --info --title="測定完了！" --text="お疲れ様でした！\n\n🏆 あなたのCPUスコア: 【 $FINAL_SCORE 】\n\n(解説)\n・数値が高いほど高性能です。\n・PCの全コア（$(nproc)スレッド）をフル稼働させた結果です！"
+          EOF
+          
+          sudo chmod +x config/includes.chroot/usr/local/bin/my-bench.sh
+
+          cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/CPU-Bench.desktop > /dev/null
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=CPUベンチマーク(自作)
+          Comment=シネベンチ風のオリジナル測定ツール
+          Exec=/usr/local/bin/my-bench.sh
+          Icon=utilities-system-monitor
+          Terminal=false
+          StartupNotify=false
+          EOF
+          
+          sudo chmod +x config/includes.chroot/etc/skel/Desktop/CPU-Bench.desktop
+
+      - name: Build ISO
+        run: |
+          cd build-dir
+          sudo lb build
+
+      - name: Upload ISO to GitHub (Backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: My-UltraLight-WinStyle-OS
+          path: build-dir/*.iso
