@@ -1,4 +1,4 @@
-name: Build Custom Linux OS (Ultra-Light Windows Style v5)
+name: Build Custom Linux OS (Ultra-Light Windows Style v7)
 on:
   workflow_dispatch:
 
@@ -21,20 +21,20 @@ jobs:
           mkdir -p build-dir
           cd build-dir
           sudo lb config \
-            --distribution bookworm \
+            --distribution trixie \
             --architecture amd64 \
             --archive-areas "main contrib non-free-firmware" \
             --bootappend-live "boot=live components locales=ja_JP.UTF-8 keyboard-layouts=jp quiet splash plymouth.ignore-serial-consoles" \
             --security false
 
           # ---------------------------------------------------------
-          # 1. パッケージリスト（★Calamaresインストーラーを追加★）
+          # 1. パッケージリスト（wget, curlを追加）
           # ---------------------------------------------------------
           sudo mkdir -p config/package-lists
           echo "linux-image-amd64 live-boot live-config systemd-sysv task-lxqt-desktop firefox-esr mousepad network-manager isolinux grub-pc-bin grub-efi-amd64-bin \
           fonts-noto-cjk fonts-noto-color-emoji fcitx5 fcitx5-mozc fcitx5-config-qt \
           ufw apparmor apparmor-profiles picom \
-          cpu-x hardinfo glmark2 mangohud sysbench zenity \
+          cpu-x hardinfo glmark2 mangohud sysbench zenity wget curl \
           gnome-software gnome-software-plugin-flatpak flatpak \
           plymouth plymouth-themes papirus-icon-theme gsmartcontrol \
           calamares calamares-settings-debian qterminal" | sudo tee config/package-lists/my-apps.list.chroot > /dev/null
@@ -61,53 +61,94 @@ jobs:
           Name=Picom VSync" | sudo tee config/includes.chroot/etc/skel/.config/autostart/picom.desktop > /dev/null
 
           # ---------------------------------------------------------
-          # 4. 自作プログラム群（ベンチマーク・アップデート機能）
+          # 4. 自作プログラム群
           # ---------------------------------------------------------
           sudo mkdir -p config/includes.chroot/usr/local/bin
           sudo mkdir -p config/includes.chroot/etc/skel/Desktop
 
-          # [省略せずすべて記載] 🏆 CPUベンチマーク
+          # 🎁 【新機能】かんたんアプリ追加ツール
+          cat << 'EOF' | sudo tee config/includes.chroot/usr/local/bin/my-app-installer.sh > /dev/null
+          #!/bin/bash
+          CHOICE=$(zenity --list --title="かんたんアプリ追加" --text="インストールしたいアプリを選んでください:\n(※インターネット接続が必要です)" --radiolist --column="選択" --column="アプリ名" TRUE "Google Chrome (定番ブラウザ)" FALSE "Discord (チャット・通話)" FALSE "Visual Studio Code (プログラミング)" FALSE "Spotify (音楽)")
+          [ -z "$CHOICE" ] && exit
+
+          qterminal -e bash -c "
+          echo '⏳ 【 $CHOICE 】 をダウンロード＆インストールしています...'
+          echo '※PCの性能や回線によっては数分かかります。そのままお待ちください。'
+          sudo apt-get update -y > /dev/null
+          
+          if [ \"$CHOICE\" = \"Google Chrome (定番ブラウザ)\" ]; then
+              wget -qO /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+              sudo apt-get install -y /tmp/chrome.deb
+          elif [ \"$CHOICE\" = \"Discord (チャット・通話)\" ]; then
+              flatpak install -y flathub com.discordapp.Discord
+          elif [ \"$CHOICE\" = \"Visual Studio Code (プログラミング)\" ]; then
+              wget -qO /tmp/vscode.deb 'https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-x64'
+              sudo apt-get install -y /tmp/vscode.deb
+          elif [ \"$CHOICE\" = \"Spotify (音楽)\" ]; then
+              flatpak install -y flathub com.spotify.Client
+          fi
+          
+          echo ''
+          echo '✅ インストールが完了しました！'
+          echo '画面左下のスタートメニューから起動できます。'
+          echo '(この画面はエンターキーを押すと閉じます)'
+          read
+          "
+          EOF
+          sudo chmod +x config/includes.chroot/usr/local/bin/my-app-installer.sh
+
+          # 🏆 CPUベンチマーク
           cat << 'EOF' | sudo tee config/includes.chroot/usr/local/bin/my-bench.sh > /dev/null
           #!/bin/bash
-          MODE=$(zenity --list --title="CPUベンチマーク設定" --text="測定モードを選択してください:" --radiolist --column="選択" --column="モード" TRUE "マルチコア (全スレッド)" FALSE "シングルコア (単体性能)")
+          MODE=$(zenity --list --title="CPUベンチマーク" --text="測定モードを選択してください:" --radiolist --column="選択" --column="モード" TRUE "マルチコア (全スレッド)" FALSE "シングルコア (単体性能)")
           [ -z "$MODE" ] && exit
           THREADS=$(nproc); PRIME_LIMIT=20000
           if [ "$MODE" == "シングルコア (単体性能)" ]; then THREADS=1; PRIME_LIMIT=10000; fi
           zenity --info --title="準備完了" --text="[$MODE] で測定を開始します。" --timeout=3
-          sysbench cpu --cpu-max-prime=$PRIME_LIMIT --threads=$THREADS run | tee /tmp/bench.log | zenity --progress --title="測定中..." --text="CPUを稼働させて計算中..." --pulsate --auto-close --no-cancel
+          sysbench cpu --cpu-max-prime=$PRIME_LIMIT --threads=$THREADS run | tee /tmp/bench.log | zenity --progress --title="測定中..." --text="計算中..." --pulsate --auto-close --no-cancel
           SCORE=$(grep "events per second:" /tmp/bench.log | awk '{print $4}')
-          zenity --info --title="測定完了！" --text="🏆 あなたのCPUスコア\nモード: $MODE\n\nスコア: 【 $(printf "%.0f" $SCORE) 】"
+          zenity --info --title="測定完了！" --text="🏆 あなたのCPUスコア\nモード: $MODE\nスコア: 【 $(printf "%.0f" $SCORE) 】"
           EOF
           sudo chmod +x config/includes.chroot/usr/local/bin/my-bench.sh
 
-          # [省略せずすべて記載] 🎮 GPUベンチマーク
+          # 🎮 GPUベンチマーク
           cat << 'EOF' | sudo tee config/includes.chroot/usr/local/bin/my-gpu-bench.sh > /dev/null
           #!/bin/bash
-          RES=$(zenity --list --title="GPU設定 (1/2)" --text="解像度を選択してください:" --radiolist --column="選択" --column="解像度" TRUE "1280x720" FALSE "1920x1080" FALSE "フルスクリーン")
+          RES=$(zenity --list --title="GPU設定 (1/2)" --text="解像度を選択:" --radiolist --column="選択" --column="解像度" TRUE "1280x720" FALSE "1920x1080" FALSE "フルスクリーン")
           [ -z "$RES" ] && exit
-          QUAL=$(zenity --list --title="GPU設定 (2/2)" --text="画質（負荷）を選択:" --radiolist --column="選択" --column="画質" TRUE "標準設定 (Low)" FALSE "高画質設定 (High)")
+          QUAL=$(zenity --list --title="GPU設定 (2/2)" --text="画質を選択:" --radiolist --column="選択" --column="画質" TRUE "標準設定 (Low)" FALSE "高画質設定 (High)")
           [ -z "$QUAL" ] && exit
           CMD="glmark2"
           if [ "$RES" == "フルスクリーン" ]; then CMD="$CMD --fullscreen"; else CMD="$CMD -s $RES"; fi
           if [ "$QUAL" == "高画質設定 (High)" ]; then CMD="$CMD --visual-config samples=4"; fi
-          zenity --info --title="準備完了" --text="以下の設定で3Dテストを開始します。\n\n解像度: $RES\n画質: $QUAL" --timeout=3
           $CMD > /tmp/gpu_bench.log 2>&1
           GPU_SCORE=$(grep "glmark2 Score" /tmp/gpu_bench.log | awk '{print $NF}')
-          zenity --info --title="測定完了！" --text="🎮 あなたのGPUスコア: 【 $GPU_SCORE 】"
+          zenity --info --title="測定完了！" --text="🎮 GPUスコア: 【 $GPU_SCORE 】"
           EOF
           sudo chmod +x config/includes.chroot/usr/local/bin/my-gpu-bench.sh
 
-          # 🔄 新機能：Windows Update風のシステム更新スクリプト
+          # 🔄 システム更新
           cat << 'EOF' | sudo tee config/includes.chroot/usr/local/bin/my-update.sh > /dev/null
           #!/bin/bash
-          zenity --question --title="システム更新" --text="最新のセキュリティ更新とバグ修正を確認し、インストールしますか？\n（※インターネット接続が必要です）" || exit
-          qterminal -e bash -c "echo '🔍 更新プログラムを探しています...'; sudo apt-get update; echo '⚙️ インストールを開始します...'; sudo apt-get upgrade -y; echo ''; echo '✅ すべての更新が完了しました！この画面は閉じて大丈夫です。'; read"
+          zenity --question --title="システム更新" --text="最新の更新をインストールしますか？" || exit
+          qterminal -e bash -c "sudo apt-get update && sudo apt-get upgrade -y; echo '✅ 完了しました！'; read"
           EOF
           sudo chmod +x config/includes.chroot/usr/local/bin/my-update.sh
 
           # --- デスクトップのショートカット作成 ---
           
-          # 1. ⚙️ 設定 (Settings)
+          # ★新しいアイコン（アプリ追加）
+          cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/App-Installer.desktop > /dev/null
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=かんたんアプリ追加
+          Exec=/usr/local/bin/my-app-installer.sh
+          Icon=system-software-install
+          EOF
+          sudo chmod +x config/includes.chroot/etc/skel/Desktop/App-Installer.desktop
+
           cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/Settings.desktop > /dev/null
           [Desktop Entry]
           Version=1.0
@@ -118,7 +159,6 @@ jobs:
           EOF
           sudo chmod +x config/includes.chroot/etc/skel/Desktop/Settings.desktop
 
-          # 2. 🔄 システム更新 (Update)
           cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/Update.desktop > /dev/null
           [Desktop Entry]
           Version=1.0
@@ -129,7 +169,6 @@ jobs:
           EOF
           sudo chmod +x config/includes.chroot/etc/skel/Desktop/Update.desktop
 
-          # 3. 💾 OSをインストール (Installer)
           cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/Install.desktop > /dev/null
           [Desktop Entry]
           Version=1.0
@@ -140,7 +179,6 @@ jobs:
           EOF
           sudo chmod +x config/includes.chroot/etc/skel/Desktop/Install.desktop
 
-          # (以前からのベンチマーク等のアイコン)
           cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/CPU-Bench.desktop > /dev/null
           [Desktop Entry]
           Version=1.0
@@ -161,6 +199,26 @@ jobs:
           EOF
           sudo chmod +x config/includes.chroot/etc/skel/Desktop/GPU-Bench.desktop
 
+          cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/CPU-X.desktop > /dev/null
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=システム情報 (CPU-X)
+          Exec=cpu-x
+          Icon=cpu-x
+          EOF
+          sudo chmod +x config/includes.chroot/etc/skel/Desktop/CPU-X.desktop
+
+          cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/DiskInfo.desktop > /dev/null
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=ディスク診断 (DiskInfo)
+          Exec=gsmartcontrol
+          Icon=gsmartcontrol
+          EOF
+          sudo chmod +x config/includes.chroot/etc/skel/Desktop/DiskInfo.desktop
+
       - name: Build ISO
         run: |
           cd build-dir
@@ -169,5 +227,5 @@ jobs:
       - name: Upload ISO to GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: My-UltraLight-WinStyle-v5
+          name: My-UltraLight-WinStyle-v7-Debian13
           path: build-dir/*.iso
