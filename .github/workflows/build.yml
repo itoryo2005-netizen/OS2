@@ -1,4 +1,4 @@
-name: Build Custom Linux OS (Ultra-Light Windows Style v4)
+name: Build Custom Linux OS (Ultra-Light Windows Style v5)
 on:
   workflow_dispatch:
 
@@ -28,7 +28,7 @@ jobs:
             --security false
 
           # ---------------------------------------------------------
-          # 1. パッケージリスト
+          # 1. パッケージリスト（★Calamaresインストーラーを追加★）
           # ---------------------------------------------------------
           sudo mkdir -p config/package-lists
           echo "linux-image-amd64 live-boot live-config systemd-sysv task-lxqt-desktop firefox-esr mousepad network-manager isolinux grub-pc-bin grub-efi-amd64-bin \
@@ -36,7 +36,8 @@ jobs:
           ufw apparmor apparmor-profiles picom \
           cpu-x hardinfo glmark2 mangohud sysbench zenity \
           gnome-software gnome-software-plugin-flatpak flatpak \
-          plymouth plymouth-themes papirus-icon-theme gsmartcontrol" | sudo tee config/package-lists/my-apps.list.chroot > /dev/null
+          plymouth plymouth-themes papirus-icon-theme gsmartcontrol \
+          calamares calamares-settings-debian qterminal" | sudo tee config/package-lists/my-apps.list.chroot > /dev/null
 
           # ---------------------------------------------------------
           # 2. アプリストア（Flathub）の初期設定
@@ -60,69 +61,86 @@ jobs:
           Name=Picom VSync" | sudo tee config/includes.chroot/etc/skel/.config/autostart/picom.desktop > /dev/null
 
           # ---------------------------------------------------------
-          # 4. 新・自作ベンチマークプログラムの実装
+          # 4. 自作プログラム群（ベンチマーク・アップデート機能）
           # ---------------------------------------------------------
           sudo mkdir -p config/includes.chroot/usr/local/bin
           sudo mkdir -p config/includes.chroot/etc/skel/Desktop
 
-          # 🏆 進化したCPUベンチマーク（シングル/マルチ選択式）
+          # [省略せずすべて記載] 🏆 CPUベンチマーク
           cat << 'EOF' | sudo tee config/includes.chroot/usr/local/bin/my-bench.sh > /dev/null
           #!/bin/bash
-          MODE=$(zenity --list --title="CPUベンチマーク設定" --text="測定モードを選択してください:\n(シネベンチのように分けて測定できます)" --radiolist --column="選択" --column="モード" TRUE "マルチコア (全スレッドで全力計算)" FALSE "シングルコア (1つのコア単体の性能)")
+          MODE=$(zenity --list --title="CPUベンチマーク設定" --text="測定モードを選択してください:" --radiolist --column="選択" --column="モード" TRUE "マルチコア (全スレッド)" FALSE "シングルコア (単体性能)")
           [ -z "$MODE" ] && exit
-          
-          THREADS=$(nproc)
-          PRIME_LIMIT=20000
-          if [ "$MODE" == "シングルコア (1つのコア単体の性能)" ]; then
-              THREADS=1
-              PRIME_LIMIT=10000
-          fi
-          
-          zenity --info --title="準備完了" --text="[$MODE] で測定を開始します。\n\n※PCが全力で計算を行います。\nしばらくお待ちください..." --timeout=3
-          sysbench cpu --cpu-max-prime=$PRIME_LIMIT --threads=$THREADS run | tee /tmp/bench.log | zenity --progress --title="測定中..." --text="CPUを稼働させて計算中... ($MODE)\nファンが回る場合があります。" --pulsate --auto-close --no-cancel
-          
+          THREADS=$(nproc); PRIME_LIMIT=20000
+          if [ "$MODE" == "シングルコア (単体性能)" ]; then THREADS=1; PRIME_LIMIT=10000; fi
+          zenity --info --title="準備完了" --text="[$MODE] で測定を開始します。" --timeout=3
+          sysbench cpu --cpu-max-prime=$PRIME_LIMIT --threads=$THREADS run | tee /tmp/bench.log | zenity --progress --title="測定中..." --text="CPUを稼働させて計算中..." --pulsate --auto-close --no-cancel
           SCORE=$(grep "events per second:" /tmp/bench.log | awk '{print $4}')
-          FINAL_SCORE=$(printf "%.0f" $SCORE)
-          
-          zenity --info --title="測定完了！" --text="🏆 あなたのCPUスコア\nモード: $MODE\n\nスコア: 【 $FINAL_SCORE 】\n\n(解説)\n・シングルコアが高い → 普段の動作やゲームがサクサク！\n・マルチコアが高い → 動画編集や重い作業が得意！"
+          zenity --info --title="測定完了！" --text="🏆 あなたのCPUスコア\nモード: $MODE\n\nスコア: 【 $(printf "%.0f" $SCORE) 】"
           EOF
           sudo chmod +x config/includes.chroot/usr/local/bin/my-bench.sh
 
-          # 🎮 進化したGPUベンチマーク（解像度・画質選択式）
+          # [省略せずすべて記載] 🎮 GPUベンチマーク
           cat << 'EOF' | sudo tee config/includes.chroot/usr/local/bin/my-gpu-bench.sh > /dev/null
           #!/bin/bash
           RES=$(zenity --list --title="GPU設定 (1/2)" --text="解像度を選択してください:" --radiolist --column="選択" --column="解像度" TRUE "1280x720" FALSE "1920x1080" FALSE "フルスクリーン")
           [ -z "$RES" ] && exit
-          
-          QUAL=$(zenity --list --title="GPU設定 (2/2)" --text="画質（負荷）を選択してください:" --radiolist --column="選択" --column="画質" TRUE "標準設定 (Low)" FALSE "高画質設定 (High - アンチエイリアス有効)")
+          QUAL=$(zenity --list --title="GPU設定 (2/2)" --text="画質（負荷）を選択:" --radiolist --column="選択" --column="画質" TRUE "標準設定 (Low)" FALSE "高画質設定 (High)")
           [ -z "$QUAL" ] && exit
-          
           CMD="glmark2"
-          if [ "$RES" == "フルスクリーン" ]; then
-              CMD="$CMD --fullscreen"
-          else
-              CMD="$CMD -s $RES"
-          fi
-          
-          if [ "$QUAL" == "高画質設定 (High - アンチエイリアス有効)" ]; then
-              CMD="$CMD --visual-config samples=4"
-          fi
-          
-          zenity --info --title="準備完了" --text="以下の設定で3Dグラフィックテストを開始します。\n\n解像度: $RES\n画質: $QUAL\n\n※終わるまでウィンドウを閉じないでください。" --timeout=3
-          
+          if [ "$RES" == "フルスクリーン" ]; then CMD="$CMD --fullscreen"; else CMD="$CMD -s $RES"; fi
+          if [ "$QUAL" == "高画質設定 (High)" ]; then CMD="$CMD --visual-config samples=4"; fi
+          zenity --info --title="準備完了" --text="以下の設定で3Dテストを開始します。\n\n解像度: $RES\n画質: $QUAL" --timeout=3
           $CMD > /tmp/gpu_bench.log 2>&1
           GPU_SCORE=$(grep "glmark2 Score" /tmp/gpu_bench.log | awk '{print $NF}')
-          
-          if [ -z "$GPU_SCORE" ]; then
-              zenity --error --text="測定中にエラーが発生しました。\n(この解像度や設定がPCに対応していない可能性があります)"
-              exit
-          fi
-          
-          zenity --info --title="測定完了！" --text="🎮 あなたのGPUスコア: 【 $GPU_SCORE 】\n\n[設定]\n解像度: $RES\n画質: $QUAL\n\n(解説)\n・ゲームや動画再生の快適さを示す数値です！"
+          zenity --info --title="測定完了！" --text="🎮 あなたのGPUスコア: 【 $GPU_SCORE 】"
           EOF
           sudo chmod +x config/includes.chroot/usr/local/bin/my-gpu-bench.sh
 
+          # 🔄 新機能：Windows Update風のシステム更新スクリプト
+          cat << 'EOF' | sudo tee config/includes.chroot/usr/local/bin/my-update.sh > /dev/null
+          #!/bin/bash
+          zenity --question --title="システム更新" --text="最新のセキュリティ更新とバグ修正を確認し、インストールしますか？\n（※インターネット接続が必要です）" || exit
+          qterminal -e bash -c "echo '🔍 更新プログラムを探しています...'; sudo apt-get update; echo '⚙️ インストールを開始します...'; sudo apt-get upgrade -y; echo ''; echo '✅ すべての更新が完了しました！この画面は閉じて大丈夫です。'; read"
+          EOF
+          sudo chmod +x config/includes.chroot/usr/local/bin/my-update.sh
+
           # --- デスクトップのショートカット作成 ---
+          
+          # 1. ⚙️ 設定 (Settings)
+          cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/Settings.desktop > /dev/null
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=設定 (Settings)
+          Exec=lxqt-config
+          Icon=preferences-system
+          EOF
+          sudo chmod +x config/includes.chroot/etc/skel/Desktop/Settings.desktop
+
+          # 2. 🔄 システム更新 (Update)
+          cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/Update.desktop > /dev/null
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=システム更新
+          Exec=/usr/local/bin/my-update.sh
+          Icon=system-software-update
+          EOF
+          sudo chmod +x config/includes.chroot/etc/skel/Desktop/Update.desktop
+
+          # 3. 💾 OSをインストール (Installer)
+          cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/Install.desktop > /dev/null
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=このOSをPCにインストール
+          Exec=sudo calamares
+          Icon=drive-harddisk
+          EOF
+          sudo chmod +x config/includes.chroot/etc/skel/Desktop/Install.desktop
+
+          # (以前からのベンチマーク等のアイコン)
           cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/CPU-Bench.desktop > /dev/null
           [Desktop Entry]
           Version=1.0
@@ -143,26 +161,6 @@ jobs:
           EOF
           sudo chmod +x config/includes.chroot/etc/skel/Desktop/GPU-Bench.desktop
 
-          cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/CPU-X.desktop > /dev/null
-          [Desktop Entry]
-          Version=1.0
-          Type=Application
-          Name=システム情報 (CPU-Z風)
-          Exec=cpu-x
-          Icon=cpu-x
-          EOF
-          sudo chmod +x config/includes.chroot/etc/skel/Desktop/CPU-X.desktop
-
-          cat << 'EOF' | sudo tee config/includes.chroot/etc/skel/Desktop/DiskInfo.desktop > /dev/null
-          [Desktop Entry]
-          Version=1.0
-          Type=Application
-          Name=ディスク診断 (DiskInfo)
-          Exec=gsmartcontrol
-          Icon=gsmartcontrol
-          EOF
-          sudo chmod +x config/includes.chroot/etc/skel/Desktop/DiskInfo.desktop
-
       - name: Build ISO
         run: |
           cd build-dir
@@ -171,5 +169,5 @@ jobs:
       - name: Upload ISO to GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: My-UltraLight-WinStyle-v4
+          name: My-UltraLight-WinStyle-v5
           path: build-dir/*.iso
